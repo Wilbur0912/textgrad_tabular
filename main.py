@@ -5,11 +5,12 @@ import numpy as np
 from sklearn.datasets import load_iris
 from sklearn.model_selection import train_test_split
 import textgrad as tg
-from textgrad.loss import TextLoss
+from textgrad.loss import TextLoss, MultiFieldTokenParsedEvaluation
 from tqdm import tqdm
 from dotenv import load_dotenv
 import pandas as pd
 load_dotenv(override=True)
+
 
 # Load Iris dataset
 iris = load_iris(as_frame=True)
@@ -55,8 +56,36 @@ gpt3_model = tg.BlackboxLLM(llm_api_test)
 gpt4_model = tg.BlackboxLLM(llm_api_eval)
 
 tg.set_backward_engine(llm_api_eval, override=True)
-optimizer = tg.TextualGradientDescent(engine=llm_api_eval, parameters=[system_prompt])
-cal_loss = TextLoss(system_prompt, engine=llm_api_eval)
+
+optimizer_system_prompt = """
+You're optimizing the system prompt of a language model classifier for the iris flower dataset.
+Given the classification performance feedback, return an improved version of the current system prompt.
+Only output the new prompt within <FEEDBACK> and </FEEDBACK> tags.
+
+Example:
+<FEEDBACK> Predict iris flower species using its petal and sepal measurements. </FEEDBACK>
+"""
+
+optimizer = tg.TextualGradientDescent(engine=llm_api_eval, parameters=[system_prompt], optimizer_system_prompt=optimizer_system_prompt, new_variable_tags=["<FEEDBACK>", "</FEEDBACK>"])
+
+role_descriptions = [
+    "Question for the task",
+    "Ground truth answer",
+    "Prediction from the language model"
+]
+evaluation_instruction = "Below is a question from a question-answering task, the ground truth answer, and reasoning with the final prediction. Is the final prediction correct, i.e. the same as the ground truth answer? Say only 1 (yes) or 0 (no). Return your response within <Accuracy> </Accuracy> tags. e.g.<Accuracy> 0 </Accuracy> or <Accuracy> 1 </Accuracy> and also give me your percentage's confident between 0% to 100% for this answer and put it in <Confident></Confident>, also put the feature value with its name in <Features></Features> tags format like this sepal length: ? cm, sepal width: ? cm, petal length: ? cm, petal width: ? cm, also put your natural language feedback in <FEEDBACK> </FEEDBACK> tags. "
+#evaluation_instruction = "Below is a question from a question-answering task, the ground truth answer, and reasoning with the final prediction. Is the final prediction correct, i.e. the same as the ground truth answer? Say only 1 (yes) or 0 (no). Return your response within <Accuracy> </Accuracy> tags. e.g.<Accuracy> 0 </Accuracy> or <Accuracy> 1 </Accuracy> "
+
+#evaluation_instruction = "Below is a question from a question-answering task, the ground truth answer, and reasoning with the final prediction. Is the final prediction correct, i.e. the same as the ground truth answer?"
+eval_instruction = tg.Variable(evaluation_instruction, requires_grad=False, role_description="evaluation instruction for the task")
+# eval_fn = MultiFieldTokenParsedEvaluation(
+#     eval_instruction,
+#     engine=llm_api_eval,
+#     role_descriptions=role_descriptions,
+#     parse_tags=["<ACCURACY>", "</ACCURACY>"]
+# )
+
+eval_fn = TextLoss(eval_instruction, engine=llm_api_eval)
 
 results = {"test_acc": [], "prompt": [], "validation_acc": []}
 # results["test_acc"].append(eval_dataset(test_dataset, cal_loss, gpt3_model))
@@ -92,7 +121,7 @@ for epoch in range(3):
         serialized_sample_data = serialize_data(sampled_batch_x, sampled_batch_y)
 
         # 4. concatenate sample and data them with prompt
-        prompt_with_data = f"{system_prompt.value}\n" + "\n".join(serialized_sample_data) + "\n" + "what is the answer below?"
+        prompt_with_data = f"{system_prompt.value}\n" + "\n".join(serialized_sample_data) + "\n" + "what is the answer below? Just return the species name of flower don't give me anything else"
         prompt_with_data = tg.Variable(prompt_with_data, requires_grad=False, role_description="query to the language model with sample data")
 
         #print("prompt with data: ", prompt_with_data.value)
@@ -108,25 +137,37 @@ for epoch in range(3):
             print("x after adding prompt: ", x)
 
             x = tg.Variable(x, requires_grad=False, role_description="query to the language model")
-            y = tg.Variable(y, requires_grad=False, role_description="correct answer for the query")
+            y = tg.Variable(str(y), requires_grad=False, role_description="correct answer for the query")
+
 
             response = gpt3_model(x)
 
-            print("response: ", response)
-            try:
-                eval_output_variable = cal_loss(inputs=dict(prediction=response, ground_truth_answer=y))
-            except:
-                eval_output_variable = cal_loss([x, y, response])
+            print("response: ", response, "ground truth: ", y)
+
+            comparison = f"prediction ={response} ground truth = {y} features values = {x.value}"
+
+            comparison = tg.Variable(comparison, requires_grad=False, role_description="evaluation of the prediction against the ground truth")
+            eval_output_variable = eval_fn(comparison)
+
+            print("eval_output_variable: ", eval_output_variable)
 
             losses.append(eval_output_variable)
+
+        print("losses: ", losses)
         total_loss = tg.sum(losses)
+        print(total_loss)
+
+        #----- fix below -----
+
         total_loss.backward()
+
         optimizer.step()
-        
-        run_validation_revert(system_prompt, results, gpt3_model, cal_loss, val_dataset)
+
+
+        run_validation_revert(system_prompt, results, gpt3_model, eval_fn, val_dataset)
         
         print("sys prompt: ", system_prompt)
-        test_acc = eval_dataset(test_dataset, cal_loss, gpt3_model)
+        test_acc = eval_dataset(test_dataset, eval_fn, gpt3_model)
         results["test_acc"].append(test_acc)
         results["prompt"].append(system_prompt.get_value())
         if steps == 3:

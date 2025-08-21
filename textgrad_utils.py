@@ -36,7 +36,18 @@ def serialize_data(batch_x, batch_y=None):
     
     return data_str_list
 
-def eval_sample(item, eval_fn, model):
+import re
+def parse_accuracy_from_tag(text):
+    match = re.search(r"<Accuracy>\s*(\d(?:\.\d+)?)\s*</Accuracy>", text)
+    if match:
+        return int(float(match.group(1)))  # safe for both int/float style values
+    else:
+        return 0  # fallback, or raise error
+
+    # 修改這行：
+    return parse_accuracy_from_tag(eval_output_variable.value)
+
+def eval_sample(item, eval_fn, model, system_prompt):
     """
     This function allows us to evaluate if an answer to a question in the prompt is a good answer.
 
@@ -46,15 +57,21 @@ def eval_sample(item, eval_fn, model):
     y = tg.Variable(y, requires_grad=False, role_description="correct answer for the query")
     response = model(x)
 
-    try:
-        eval_output_variable = eval_fn(inputs=dict(prediction=response, ground_truth_answer=y))
-        return int(eval_output_variable.value)
-    except:
-        eval_output_variable = eval_fn([x, y, response])
-        eval_output_parsed = eval_fn.parse_output(eval_output_variable)
-        return int(eval_output_parsed)
+    comparison = f"prediction ={response} ground truth = {y} features values = {x.value}"
+
+    comparison = tg.Variable(comparison, requires_grad=False, role_description="evaluation of the prediction against the ground truth")
+
+    eval_output_variable = eval_fn(comparison)
+
+    #print("eval_output_variable: ", type(parse_accuracy_from_tag(eval_output_variable.value)))
+
+    return parse_accuracy_from_tag(eval_output_variable.value)
+    #return int(eval_output_variable.value)
+
     
-def eval_dataset(test_set, eval_fn, model, max_samples: int=None):
+def eval_dataset(test_set, eval_fn, model, max_samples: int=None, system_prompt):
+
+
     if max_samples is None:
         max_samples = len(test_set)
     accuracy_list = []
@@ -71,6 +88,8 @@ def eval_dataset(test_set, eval_fn, model, max_samples: int=None):
             acc_item = future.result()
             accuracy_list.append(acc_item)
             tqdm_loader.set_description(f"Accuracy: {np.mean(accuracy_list)}")
+
+    print("accuracy_list: ", accuracy_list)
     return accuracy_list 
 
 
