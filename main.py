@@ -28,6 +28,8 @@ train_dataset = IrisDataset(X_train, y_train)
 val_dataset = IrisDataset(X_val, y_val)
 test_dataset = IrisDataset(X_test, y_test)
 
+
+
 def collate_fn(batch):
     batch_x = [item["input"] for item in batch]
     batch_y = [item["target"] for item in batch]
@@ -37,8 +39,8 @@ def collate_fn(batch):
 train_batch_size = 20  # Define your batch size
 train_loader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True, collate_fn=collate_fn)
 
-eval_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, collate_fn=collate_fn)
-test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, collate_fn=collate_fn)
+val_loader = DataLoader(val_dataset, batch_size=len(val_dataset), shuffle=False, collate_fn=collate_fn)
+test_loader = DataLoader(test_dataset, batch_size=len(test_dataset), shuffle=False, collate_fn=collate_fn)
 
 # Initial prompt
 system_prompt = "Predict the species of the iris flower based on its sepal and petal dimensions."
@@ -78,21 +80,16 @@ evaluation_instruction = "Below is a question from a question-answering task, th
 
 #evaluation_instruction = "Below is a question from a question-answering task, the ground truth answer, and reasoning with the final prediction. Is the final prediction correct, i.e. the same as the ground truth answer?"
 eval_instruction = tg.Variable(evaluation_instruction, requires_grad=False, role_description="evaluation instruction for the task")
-# eval_fn = MultiFieldTokenParsedEvaluation(
-#     eval_instruction,
-#     engine=llm_api_eval,
-#     role_descriptions=role_descriptions,
-#     parse_tags=["<ACCURACY>", "</ACCURACY>"]
-# )
 
 eval_fn = TextLoss(eval_instruction, engine=llm_api_eval)
 
 results = {"test_acc": [], "prompt": [], "validation_acc": []}
-# results["test_acc"].append(eval_dataset(test_dataset, cal_loss, gpt3_model))
-# results["validation_acc"].append(eval_dataset(val_dataset, cal_loss, gpt3_model))
-# results["prompt"].append(system_prompt.get_value())
+results["test_acc"].append(eval_dataset(test_loader, eval_fn, gpt3_model, system_prompt))
+results["validation_acc"].append(eval_dataset(val_loader, eval_fn, gpt3_model, system_prompt))
+results["prompt"].append(system_prompt.get_value())
+
 # 1. Initial prediction
-for epoch in range(3):
+for epoch in range(1):
     for steps, (batch_x, batch_y) in enumerate((pbar := tqdm(train_loader, position=0))):
         # print(f"\n🔹 Step {steps}")
         # for i, (x, y) in enumerate(zip(batch_x, batch_y)):
@@ -163,13 +160,22 @@ for epoch in range(3):
 
         optimizer.step()
 
-
-        run_validation_revert(system_prompt, results, gpt3_model, eval_fn, val_dataset)
+        system_prompt, val_performance = run_validation_revert(system_prompt, results, gpt3_model, eval_fn, val_loader)
         
-        print("sys prompt: ", system_prompt)
-        test_acc = eval_dataset(test_dataset, eval_fn, gpt3_model)
+        results["validation_acc"].append(val_performance)
+        test_acc = eval_dataset(test_loader, eval_fn, gpt3_model, system_prompt)
         results["test_acc"].append(test_acc)
         results["prompt"].append(system_prompt.get_value())
-        if steps == 3:
-            break
+        # if steps == 3:
+        #     break
+
+print("this is the final result:\n")
+print(results)
+test_acc_scores = [np.mean(batch) for batch in results['test_acc']]
+valid_acc_scores = [np.mean(batch) for batch in results['validation_acc']]
+
+results['test_acc'] = test_acc_scores
+results['validation_acc'] = valid_acc_scores
+
+print(results)
 
