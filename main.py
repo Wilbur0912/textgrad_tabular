@@ -62,13 +62,14 @@ tg.set_backward_engine(llm_api_eval, override=True)
 optimizer_system_prompt = """
 You're optimizing the system prompt of a language model classifier for the iris flower dataset.
 Given the classification performance feedback, return an improved version of the current system prompt.
-Only output the new prompt within <FEEDBACK> and </FEEDBACK> tags.
+Only output the new prompt within <new_prompt> and </new_prompt> tags.
 
 Example:
-<FEEDBACK> Predict iris flower species using its petal and sepal measurements. </FEEDBACK>
+<new_prompt> Predict iris flower species using its petal and sepal measurements. </new_prompt>
 """
 
-optimizer = tg.TextualGradientDescent(engine=llm_api_eval, parameters=[system_prompt], optimizer_system_prompt=optimizer_system_prompt, new_variable_tags=["<FEEDBACK>", "</FEEDBACK>"])
+
+optimizer = tg.TextualGradientDescent(engine=llm_api_eval, parameters=[system_prompt], optimizer_system_prompt=optimizer_system_prompt, new_variable_tags=["<new_prompt>", "</new_prompt>"])
 
 role_descriptions = [
     "Question for the task",
@@ -91,11 +92,7 @@ results["prompt"].append(system_prompt.get_value())
 # 1. Initial prediction
 for epoch in range(1):
     for steps, (batch_x, batch_y) in enumerate((pbar := tqdm(train_loader, position=0))):
-        # print(f"\n🔹 Step {steps}")
-        # for i, (x, y) in enumerate(zip(batch_x, batch_y)):
-        #     print(f"  Sample {i}:")
-        #     print(f"    input : {x}")
-        #     print(f"    target: {y}")
+
         pbar.set_description(f"Training step {steps}. Epoch {epoch}")
         optimizer.zero_grad()
         losses = []
