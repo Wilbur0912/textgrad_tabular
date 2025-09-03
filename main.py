@@ -59,7 +59,8 @@ tg.set_backward_engine(llm_api_eval, override=True)
 
 optimizer_system_prompt = """
 You're optimizing the system prompt of a language model classifier for the iris flower dataset.
-Given the classification performance feedback, return an improved version of the current system prompt.
+base on the feedback in the the <FEEDBACK> </FEEDBACK>tag, how can we improve the current system prompt by changing \
+    and add more of your domain knowledge in order to make model predict better result to iris flowers dataset.
 Only output the new prompt within <new_prompt> and </new_prompt> tags.
 
 Example:
@@ -75,10 +76,14 @@ role_descriptions = [
     "Prediction from the language model"
 ]
 #evaluation_instruction = "Below is a question from a question-answering task, the ground truth answer, and reasoning with the final prediction. Is the final prediction correct, i.e. the same as the ground truth answer? Say only 1 (yes) or 0 (no). Return your response within <Accuracy> </Accuracy> tags. e.g.<Accuracy> 0 </Accuracy> or <Accuracy> 1 </Accuracy> and also give me your percentage's confident between 0% to 100% for this answer and put it in <Confident></Confident>, also put the feature value with its name in <Features></Features> tags format like this sepal length: ? cm, sepal width: ? cm, petal length: ? cm, petal width: ? cm, also put your natural language feedback in <FEEDBACK> </FEEDBACK> tags. "
-evaluation_instruction = "Below is a question from a question-answering task, the ground truth answer, \
-    and reasoning with the final prediction. Is the final prediction correct, i.e. the same as the ground " \
-    "truth answer? Say only 1 (yes) or 0 (no). Return your response within <Accuracy> </Accuracy> tags. e.g.<Accuracy> " \
-    "0 </Accuracy> or <Accuracy> 1 </Accuracy> "
+# evaluation_instruction = "Below is a question from a question-answering task, the ground truth answer, \
+#     and reasoning with the final prediction. Is the final prediction correct, i.e. the same as the ground \
+#     truth answer? Say only 1 (yes) or 0 (no). Return your response within <Accuracy> </Accuracy> tags. e.g.<Accuracy> " \
+#     "0 </Accuracy> or <Accuracy> 1 </Accuracy>, also provide your feedback on this result in <FEEDBACK> </FEEDBACK> tags. "
+
+evaluation_instruction = "what is your feedback based on this batch's result? do you identify any patterns, or do you think there is any problem with\
+      the current system prompt? do you think we should add more distribution information to the system prompt, what would it be? \
+        Please provide your feedback within <FEEDBACK> </FEEDBACK> tags."
 
 #evaluation_instruction = "Below is a question from a question-answering task, the ground truth answer, and reasoning with the final prediction. Is the final prediction correct, i.e. the same as the ground truth answer?"
 eval_instruction = tg.Variable(evaluation_instruction, requires_grad=False, role_description="evaluation instruction for the task")
@@ -95,7 +100,7 @@ def pick_samples_from_train_data(data, labels, sample_size=10):
     sampled_labels = labels[indices]
     return {"data": sampled_data, "label": sampled_labels}
 
-samples = pick_samples_from_train_data(np.array(X_train), np.array(y_train), sample_size=8)
+samples = pick_samples_from_train_data(np.array(X_train), np.array(y_train), sample_size=10)
 
 
 results = {"test_acc": [], "prompt": [], "validation_acc": []}
@@ -132,16 +137,23 @@ for epoch in range(1):
         # 4. concatenate sample and data them with prompt
         prompt_with_data = f"{system_prompt.value}\n" + "\n".join(serialized_sample_data) + "\n" + "what is the answer below?\
               Just return the species name of flower for each data with space between each prediction don't give me anything else\
-                and you have to make sure the order of your prediction is the same as the order of the data I give you"
+                and you have to make sure the order of your prediction is the same as the order of the data I give you, just predict the data\
+                    one by one and give me all the prediction at once with space between each prediction"
         prompt_with_data = tg.Variable(prompt_with_data, requires_grad=False, role_description="query to the language model with sample data")
 
         #print("prompt with data: ", prompt_with_data.value)
         
         batch_x_string = f"{prompt_with_data.value}" + "\n"
+        batch_x_string_list = []
         batch_y_string = ""
+
+        batch_y_string_list = []
         for (x, y) in zip(remaining_batch_x, remaining_batch_y):
 
             x = serialize_data([x])
+
+            batch_x_string_list.append(x[0])
+            batch_y_string_list.append(str(y))
 
             batch_x_string = batch_x_string + x[0] + "\n"
 
@@ -160,18 +172,23 @@ for epoch in range(1):
         ground_truth_list = ground_truth_list[:-1]
 
         print("response: ", response_list, "ground truth: ", ground_truth_list)
-        acc = sum(p == g for p, g in zip(response_list, ground_truth_list) if g) / sum(1 for g in ground_truth_list if g)
+
+        correct_count = 0
+        total_count = 0
+        for p, g in zip(response_list, batch_y_string_list):
+            if p == g:
+                correct_count += 1
+            total_count += 1
+        acc = correct_count / total_count if total_count > 0 else 0
+
         print("Accuracy:", acc)
-
-
- 
 
         #comparison = f"prediction ={response} ground truth = {y} features values = {x.value}"
 
-        comparison = ""
-        for (response, ground_truth) in zip (response_list, ground_truth_list):
+        comparison = "system prompt: " + system_prompt.value + "\n"
+        for (feature_value, response, ground_truth) in zip (batch_x_string_list, response_list, batch_y_string_list):
 
-            comparison = comparison + f"prediction = x{ground_truth}, ground truth = {y} \n"
+            comparison = comparison + f"feature_value = {feature_value}, prediction = {ground_truth}, ground truth = {y} \n"
 
         print("comparison: ", comparison)
 
@@ -179,6 +196,7 @@ for epoch in range(1):
         eval_output_variable = eval_fn(comparison)
 
         print("eval_output_variable: ", eval_output_variable)
+        import pdb; pdb.set_trace()
 
         losses.append(eval_output_variable)
 

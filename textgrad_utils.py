@@ -64,16 +64,24 @@ def eval_sample(item, eval_fn, model, prompt_with_data):
     
     response = model(x)
 
-    comparison = f"prediction ={response} ground truth = {y} features values = {x.value}"
+    #comparison = f"prediction ={response} ground truth = {y} features values = {x.value}"
 
-    comparison = tg.Variable(comparison, requires_grad=False, role_description="evaluation of the prediction against the ground truth")
+    result = 0
+    if response.value == y.value:
+        result = 1
+    else:
+        result = 0
 
-    eval_output_variable = eval_fn(comparison)
+    #comparison = tg.Variable(comparison, requires_grad=False, role_description="evaluation of the prediction against the ground truth")
+
+    #eval_output_variable = eval_fn(comparison)
 
     #print("eval_output_variable: ", type(parse_accuracy_from_tag(eval_output_variable.value)))
 
-    return parse_accuracy_from_tag(eval_output_variable.value)
+    #return parse_accuracy_from_tag(eval_output_variable.value)
     #return int(eval_output_variable.value)
+
+    return result
 
     
 def eval_dataset(test_loader, eval_fn, model, system_prompt, samples, max_samples: int=None):
