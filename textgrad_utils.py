@@ -76,26 +76,20 @@ def eval_sample(item, eval_fn, model, prompt_with_data):
     #return int(eval_output_variable.value)
 
     
-def eval_dataset(test_loader, eval_fn, model, system_prompt ,max_samples: int=None):
+def eval_dataset(test_loader, eval_fn, model, system_prompt, samples, max_samples: int=None):
 
     for batch_x, batch_y in test_loader:
         print("batch: ", batch_y)
 
         batch_x = np.array(batch_x)  # Convert to numpy array if not already
         batch_y = np.array(batch_y)  # Convert to numpy array if not already
-        # 2. randomly sample 10 data points
-        sample_size = min(10, len(batch_x))  # Ensure we don't sample more than available
-        indices = np.random.choice(len(batch_x), sample_size, replace=False)
+        # 2. randomly sample 10
 
-        sampled_batch_x = batch_x[indices]
-        sampled_batch_y = batch_y[indices]
-
-        # Extract the rest of the data (excluding sampled)
-        remaining_batch_x = np.delete(batch_x, indices, axis=0)
-        remaining_batch_y = np.delete(batch_y, indices, axis=0)
+        sampled_x = samples["data"]
+        sampled_y = samples["label"]
 
         # 3. serialize the data
-        serialized_sample_data = serialize_data(sampled_batch_x, sampled_batch_y)
+        serialized_sample_data = serialize_data(sampled_x, sampled_y)
 
         # 4. concatenate sample and data them with prompt
         prompt_with_data = f"{system_prompt.value}\n" + "\n".join(serialized_sample_data) + "\n" + "what is the answer below? Just return the species name of flower don't give me anything else"
@@ -103,11 +97,11 @@ def eval_dataset(test_loader, eval_fn, model, system_prompt ,max_samples: int=No
 
         
         if max_samples is None:
-            max_samples = len(remaining_batch_x)
+            max_samples = len(batch_x)
         accuracy_list = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             futures = []
-            for _, sample in enumerate(zip(remaining_batch_x, remaining_batch_y)):
+            for _, sample in enumerate(zip(batch_x, batch_y)):
                 
                 future = executor.submit(eval_sample, sample, eval_fn, model, prompt_with_data)
                 futures.append(future)
@@ -123,8 +117,8 @@ def eval_dataset(test_loader, eval_fn, model, system_prompt ,max_samples: int=No
     return accuracy_list 
 
 
-def run_validation_revert(system_prompt: tg.Variable, results, model, eval_fn, val_set):
-    val_performance = np.mean(eval_dataset(val_set, eval_fn, model, system_prompt))
+def run_validation_revert(system_prompt: tg.Variable, results, model, eval_fn, val_set, samples):
+    val_performance = np.mean(eval_dataset(val_set, eval_fn, model, system_prompt, samples=samples))
     previous_performance = np.mean(results["validation_acc"][-1])
     print("val_performance: ", val_performance)
     print("previous_performance: ", previous_performance)

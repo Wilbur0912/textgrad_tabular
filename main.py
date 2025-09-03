@@ -28,8 +28,6 @@ train_dataset = IrisDataset(X_train, y_train)
 val_dataset = IrisDataset(X_val, y_val)
 test_dataset = IrisDataset(X_test, y_test)
 
-
-
 def collate_fn(batch):
     batch_x = [item["input"] for item in batch]
     batch_y = [item["target"] for item in batch]
@@ -76,18 +74,32 @@ role_descriptions = [
     "Ground truth answer",
     "Prediction from the language model"
 ]
-evaluation_instruction = "Below is a question from a question-answering task, the ground truth answer, and reasoning with the final prediction. Is the final prediction correct, i.e. the same as the ground truth answer? Say only 1 (yes) or 0 (no). Return your response within <Accuracy> </Accuracy> tags. e.g.<Accuracy> 0 </Accuracy> or <Accuracy> 1 </Accuracy> and also give me your percentage's confident between 0% to 100% for this answer and put it in <Confident></Confident>, also put the feature value with its name in <Features></Features> tags format like this sepal length: ? cm, sepal width: ? cm, petal length: ? cm, petal width: ? cm, also put your natural language feedback in <FEEDBACK> </FEEDBACK> tags. "
-#evaluation_instruction = "Below is a question from a question-answering task, the ground truth answer, and reasoning with the final prediction. Is the final prediction correct, i.e. the same as the ground truth answer? Say only 1 (yes) or 0 (no). Return your response within <Accuracy> </Accuracy> tags. e.g.<Accuracy> 0 </Accuracy> or <Accuracy> 1 </Accuracy> "
+#evaluation_instruction = "Below is a question from a question-answering task, the ground truth answer, and reasoning with the final prediction. Is the final prediction correct, i.e. the same as the ground truth answer? Say only 1 (yes) or 0 (no). Return your response within <Accuracy> </Accuracy> tags. e.g.<Accuracy> 0 </Accuracy> or <Accuracy> 1 </Accuracy> and also give me your percentage's confident between 0% to 100% for this answer and put it in <Confident></Confident>, also put the feature value with its name in <Features></Features> tags format like this sepal length: ? cm, sepal width: ? cm, petal length: ? cm, petal width: ? cm, also put your natural language feedback in <FEEDBACK> </FEEDBACK> tags. "
+evaluation_instruction = "Below is a question from a question-answering task, the ground truth answer, and reasoning with the final prediction. Is the final prediction correct, i.e. the same as the ground truth answer? Say only 1 (yes) or 0 (no). Return your response within <Accuracy> </Accuracy> tags. e.g.<Accuracy> 0 </Accuracy> or <Accuracy> 1 </Accuracy> "
 
 #evaluation_instruction = "Below is a question from a question-answering task, the ground truth answer, and reasoning with the final prediction. Is the final prediction correct, i.e. the same as the ground truth answer?"
 eval_instruction = tg.Variable(evaluation_instruction, requires_grad=False, role_description="evaluation instruction for the task")
 
 eval_fn = TextLoss(eval_instruction, engine=llm_api_eval)
 
+
+
+def pick_samples_from_train_data(data, labels, sample_size=10):
+
+    # we have to change to KNN sampling later
+    indices = np.random.choice(len(data), sample_size, replace=False)
+    sampled_data = data[indices]
+    sampled_labels = labels[indices]
+    return {"data": sampled_data, "label": sampled_labels}
+
+samples = pick_samples_from_train_data(np.array(X_train), np.array(y_train), sample_size=8)
+
+
 results = {"test_acc": [], "prompt": [], "validation_acc": []}
-results["test_acc"].append(eval_dataset(test_loader, eval_fn, gpt3_model, system_prompt))
-results["validation_acc"].append(eval_dataset(val_loader, eval_fn, gpt3_model, system_prompt))
+results["test_acc"].append(eval_dataset(test_loader, eval_fn, gpt3_model, system_prompt, samples=samples))
+results["validation_acc"].append(eval_dataset(val_loader, eval_fn, gpt3_model, system_prompt, samples=samples))
 results["prompt"].append(system_prompt.get_value())
+
 
 # 1. Initial prediction
 for epoch in range(1):
@@ -138,7 +150,8 @@ for epoch in range(1):
 
             print("response: ", response, "ground truth: ", y)
 
-            comparison = f"prediction ={response} ground truth = {y} features values = {x.value}"
+            #comparison = f"prediction ={response} ground truth = {y} features values = {x.value}"
+            comparison = f"prediction ={response} ground truth = {y}"
 
             comparison = tg.Variable(comparison, requires_grad=False, role_description="evaluation of the prediction against the ground truth")
             eval_output_variable = eval_fn(comparison)
@@ -157,14 +170,12 @@ for epoch in range(1):
 
         optimizer.step()
 
-        system_prompt, val_performance = run_validation_revert(system_prompt, results, gpt3_model, eval_fn, val_loader)
+        system_prompt, val_performance = run_validation_revert(system_prompt, results, gpt3_model, eval_fn, val_loader, samples)
         
         results["validation_acc"].append(val_performance)
-        test_acc = eval_dataset(test_loader, eval_fn, gpt3_model, system_prompt)
+        test_acc = eval_dataset(test_loader, eval_fn, gpt3_model, system_prompt, samples=samples)
         results["test_acc"].append(test_acc)
         results["prompt"].append(system_prompt.get_value())
-        # if steps == 3:
-        #     break
 
 print("this is the final result:\n")
 print(results)
