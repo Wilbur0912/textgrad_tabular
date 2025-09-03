@@ -75,7 +75,10 @@ role_descriptions = [
     "Prediction from the language model"
 ]
 #evaluation_instruction = "Below is a question from a question-answering task, the ground truth answer, and reasoning with the final prediction. Is the final prediction correct, i.e. the same as the ground truth answer? Say only 1 (yes) or 0 (no). Return your response within <Accuracy> </Accuracy> tags. e.g.<Accuracy> 0 </Accuracy> or <Accuracy> 1 </Accuracy> and also give me your percentage's confident between 0% to 100% for this answer and put it in <Confident></Confident>, also put the feature value with its name in <Features></Features> tags format like this sepal length: ? cm, sepal width: ? cm, petal length: ? cm, petal width: ? cm, also put your natural language feedback in <FEEDBACK> </FEEDBACK> tags. "
-evaluation_instruction = "Below is a question from a question-answering task, the ground truth answer, and reasoning with the final prediction. Is the final prediction correct, i.e. the same as the ground truth answer? Say only 1 (yes) or 0 (no). Return your response within <Accuracy> </Accuracy> tags. e.g.<Accuracy> 0 </Accuracy> or <Accuracy> 1 </Accuracy> "
+evaluation_instruction = "Below is a question from a question-answering task, the ground truth answer, \
+    and reasoning with the final prediction. Is the final prediction correct, i.e. the same as the ground " \
+    "truth answer? Say only 1 (yes) or 0 (no). Return your response within <Accuracy> </Accuracy> tags. e.g.<Accuracy> " \
+    "0 </Accuracy> or <Accuracy> 1 </Accuracy> "
 
 #evaluation_instruction = "Below is a question from a question-answering task, the ground truth answer, and reasoning with the final prediction. Is the final prediction correct, i.e. the same as the ground truth answer?"
 eval_instruction = tg.Variable(evaluation_instruction, requires_grad=False, role_description="evaluation instruction for the task")
@@ -127,38 +130,57 @@ for epoch in range(1):
         serialized_sample_data = serialize_data(sampled_batch_x, sampled_batch_y)
 
         # 4. concatenate sample and data them with prompt
-        prompt_with_data = f"{system_prompt.value}\n" + "\n".join(serialized_sample_data) + "\n" + "what is the answer below? Just return the species name of flower don't give me anything else"
+        prompt_with_data = f"{system_prompt.value}\n" + "\n".join(serialized_sample_data) + "\n" + "what is the answer below?\
+              Just return the species name of flower for each data with space between each prediction don't give me anything else\
+                and you have to make sure the order of your prediction is the same as the order of the data I give you"
         prompt_with_data = tg.Variable(prompt_with_data, requires_grad=False, role_description="query to the language model with sample data")
 
         #print("prompt with data: ", prompt_with_data.value)
         
+        batch_x_string = f"{prompt_with_data.value}" + "\n"
+        batch_y_string = ""
         for (x, y) in zip(remaining_batch_x, remaining_batch_y):
 
-            print(type(x))
             x = serialize_data([x])
-            print("x after serialize: ", x)
 
-            x = f"{prompt_with_data.value}\n" + "\n" + x[0]
+            batch_x_string = batch_x_string + x[0] + "\n"
 
-            print("x after adding prompt: ", x)
-
-            x = tg.Variable(x, requires_grad=False, role_description="query to the language model")
-            y = tg.Variable(str(y), requires_grad=False, role_description="correct answer for the query")
+            batch_y_string = batch_y_string + str(y) + " "
 
 
-            response = gpt3_model(x)
+        batch_x_string = tg.Variable(batch_x_string, requires_grad=False, role_description="query to the language model")
+        batch_y_string = tg.Variable(batch_y_string, requires_grad=False, role_description="correct answer for the query")
 
-            print("response: ", response, "ground truth: ", y)
+        response = gpt3_model(batch_x_string)
 
-            #comparison = f"prediction ={response} ground truth = {y} features values = {x.value}"
-            comparison = f"prediction ={response} ground truth = {y}"
+        
+        response_list = response.value.split(" ")
+        ground_truth_list = batch_y_string.value.split(" ")
+        # get rid of the last element
+        ground_truth_list = ground_truth_list[:-1]
 
-            comparison = tg.Variable(comparison, requires_grad=False, role_description="evaluation of the prediction against the ground truth")
-            eval_output_variable = eval_fn(comparison)
+        print("response: ", response_list, "ground truth: ", ground_truth_list)
+        acc = sum(p == g for p, g in zip(response_list, ground_truth_list) if g) / sum(1 for g in ground_truth_list if g)
+        print("Accuracy:", acc)
 
-            print("eval_output_variable: ", eval_output_variable)
 
-            losses.append(eval_output_variable)
+ 
+
+        #comparison = f"prediction ={response} ground truth = {y} features values = {x.value}"
+
+        comparison = ""
+        for (response, ground_truth) in zip (response_list, ground_truth_list):
+
+            comparison = comparison + f"prediction = x{ground_truth}, ground truth = {y} \n"
+
+        print("comparison: ", comparison)
+
+        comparison = tg.Variable(comparison, requires_grad=False, role_description="evaluation of the prediction against the ground truth")
+        eval_output_variable = eval_fn(comparison)
+
+        print("eval_output_variable: ", eval_output_variable)
+
+        losses.append(eval_output_variable)
 
         print("losses: ", losses)
         total_loss = tg.sum(losses)
