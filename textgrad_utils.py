@@ -3,6 +3,8 @@ import torch
 import textgrad as tg
 from tqdm import tqdm
 import concurrent
+import pandas as pd
+import re
 
 def serialize_data(batch_x, batch_y=None):
 
@@ -36,7 +38,26 @@ def serialize_data(batch_x, batch_y=None):
     
     return data_str_list
 
-import re
+def pick_samples_from_train_data(X_train, y_train, sample_size=10):
+
+    X_train = np.array(X_train)
+    y_train = np.array(y_train)
+
+    indices = np.random.choice(len(X_train), size=sample_size, replace=False)
+
+    X_sample = X_train[indices]
+    y_sample = y_train[indices]
+    X_train = np.delete(X_train, indices, axis=0)
+    y_train = np.delete(y_train, indices, axis=0)
+
+    X_train = X_train.tolist()
+    y_train = pd.Series(y_train)
+
+    serialized_sample_data = serialize_data(X_sample, y_sample)
+
+    return serialized_sample_data, X_train, y_train
+
+
 def parse_accuracy_from_tag(text):
     match = re.search(r"<Accuracy>\s*(\d(?:\.\d+)?)\s*</Accuracy>", text)
     if match:
@@ -46,6 +67,7 @@ def parse_accuracy_from_tag(text):
 
     # 修改這行：
     return parse_accuracy_from_tag(eval_output_variable.value)
+
 
 def eval_sample(item, eval_fn, model, prompt_with_data):
     """
@@ -83,13 +105,9 @@ def eval_dataset(test_loader, eval_fn, model, system_prompt, samples, max_sample
 
         batch_x = np.array(batch_x)  # Convert to numpy array if not already
         batch_y = np.array(batch_y)  # Convert to numpy array if not already
-        # 2. randomly sample 10
-
-        sampled_x = samples["data"]
-        sampled_y = samples["label"]
 
         # 3. serialize the data
-        serialized_sample_data = serialize_data(sampled_x, sampled_y)
+        serialized_sample_data = samples
 
         # 4. concatenate sample and data them with prompt
         prompt_with_data = f"{system_prompt.value}\n" + "\n".join(serialized_sample_data) + "\n" + "what is the answer below? Just return the species name of flower don't give me anything else"

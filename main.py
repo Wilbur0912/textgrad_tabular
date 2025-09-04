@@ -1,5 +1,5 @@
 from torch.utils.data import DataLoader
-from textgrad_utils import serialize_data, eval_sample, eval_dataset, run_validation_revert
+from textgrad_utils import serialize_data, eval_sample, eval_dataset, run_validation_revert, pick_samples_from_train_data
 from dataloader import IrisDataset
 import numpy as np
 from sklearn.datasets import load_iris
@@ -23,10 +23,16 @@ print(y)
 X_train, X_temp, y_train, y_temp = train_test_split(X, y, test_size=0.4, random_state=42)  # 60% train, 40% temp
 X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.5, random_state=42)  # 20% val, 20% test
 
+ 
+# sample data from training set for in-context learning
+serialized_sample_data, X_train, y_train = pick_samples_from_train_data(X_train, y_train, sample_size=10)
+
+
 # Create Dataset instances for each split
 train_dataset = IrisDataset(X_train, y_train)
 val_dataset = IrisDataset(X_val, y_val)
 test_dataset = IrisDataset(X_test, y_test)
+
 
 def collate_fn(batch):
     batch_x = [item["input"] for item in batch]
@@ -83,21 +89,9 @@ eval_instruction = tg.Variable(evaluation_instruction, requires_grad=False, role
 eval_fn = TextLoss(eval_instruction, engine=llm_api_eval)
 
 
-
-def pick_samples_from_train_data(data, labels, sample_size=10):
-
-    # we have to change to KNN sampling later
-    indices = np.random.choice(len(data), sample_size, replace=False)
-    sampled_data = data[indices]
-    sampled_labels = labels[indices]
-    return {"data": sampled_data, "label": sampled_labels}
-
-samples = pick_samples_from_train_data(np.array(X_train), np.array(y_train), sample_size=8)
-
-
 results = {"test_acc": [], "prompt": [], "validation_acc": []}
-results["test_acc"].append(eval_dataset(test_loader, eval_fn, gpt3_model, system_prompt, samples=samples))
-results["validation_acc"].append(eval_dataset(val_loader, eval_fn, gpt3_model, system_prompt, samples=samples))
+results["test_acc"].append(eval_dataset(test_loader, eval_fn, gpt3_model, system_prompt, samples=serialized_sample_data))
+results["validation_acc"].append(eval_dataset(val_loader, eval_fn, gpt3_model, system_prompt, samples=serialized_sample_data))
 results["prompt"].append(system_prompt.get_value())
 
 
@@ -112,27 +106,13 @@ for epoch in range(1):
         batch_x = np.array(batch_x)  # Convert to numpy array if not already
         batch_y = np.array(batch_y)  # Convert to numpy array if not already
 
-        # 2. randomly sample 10 data points
-        sample_size = min(10, len(batch_x))  # Ensure we don't sample more than available
-        indices = np.random.choice(len(batch_x), sample_size, replace=False)
-
-        sampled_batch_x = batch_x[indices]
-        sampled_batch_y = batch_y[indices]
-
-        # Extract the rest of the data (excluding sampled)
-        remaining_batch_x = np.delete(batch_x, indices, axis=0)
-        remaining_batch_y = np.delete(batch_y, indices, axis=0)
-
-        # 3. serialize the data
-        serialized_sample_data = serialize_data(sampled_batch_x, sampled_batch_y)
-
         # 4. concatenate sample and data them with prompt
         prompt_with_data = f"{system_prompt.value}\n" + "\n".join(serialized_sample_data) + "\n" + "what is the answer below? Just return the species name of flower don't give me anything else"
         prompt_with_data = tg.Variable(prompt_with_data, requires_grad=False, role_description="query to the language model with sample data")
 
         #print("prompt with data: ", prompt_with_data.value)
         
-        for (x, y) in zip(remaining_batch_x, remaining_batch_y):
+        for (x, y) in zip(batch_x, batch_y):
 
             print(type(x))
             x = serialize_data([x])
@@ -170,10 +150,10 @@ for epoch in range(1):
 
         optimizer.step()
 
-        system_prompt, val_performance = run_validation_revert(system_prompt, results, gpt3_model, eval_fn, val_loader, samples)
+        system_prompt, val_performance = run_validation_revert(system_prompt, results, gpt3_model, eval_fn, val_loader, serialized_sample_data)
         
         results["validation_acc"].append(val_performance)
-        test_acc = eval_dataset(test_loader, eval_fn, gpt3_model, system_prompt, samples=samples)
+        test_acc = eval_dataset(test_loader, eval_fn, gpt3_model, system_prompt, samples=serialized_sample_data)
         results["test_acc"].append(test_acc)
         results["prompt"].append(system_prompt.get_value())
 
